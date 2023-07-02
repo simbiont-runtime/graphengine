@@ -1,0 +1,194 @@
+// ---
+
+package ast
+
+import (
+	"github.com/simbiont-runtime/graphengine/parser/format"
+	"github.com/simbiont-runtime/graphengine/parser/model"
+)
+
+var (
+	_ DDLNode = &CreateGraphStmt{}
+	_ DDLNode = &DropGraphStmt{}
+	_ DDLNode = &CreateLabelStmt{}
+	_ DDLNode = &DropLabelStmt{}
+	_ DDLNode = &CreateIndexStmt{}
+	_ DDLNode = &DropIndexStmt{}
+)
+
+type CreateGraphStmt struct {
+	ddlNode
+
+	IfNotExists bool
+	Graph       model.CIStr
+}
+
+func (n *CreateGraphStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE GRAPH ")
+	ctx.WriteName(n.Graph.String())
+	return nil
+}
+
+func (n *CreateGraphStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(newNode)
+}
+
+type DropGraphStmt struct {
+	ddlNode
+
+	IfExists bool
+	Graph    model.CIStr
+}
+
+func (n *DropGraphStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP GRAPH ")
+	ctx.WriteName(n.Graph.String())
+	return nil
+}
+
+func (n *DropGraphStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(newNode)
+}
+
+type CreateLabelStmt struct {
+	ddlNode
+
+	IfNotExists bool
+	Label       model.CIStr
+}
+
+// Restore implements Node interface.
+func (n *CreateLabelStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE ")
+	ctx.WriteKeyWord("LABEL ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteName(n.Label.String())
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateLabelStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	return v.Leave(newNode)
+}
+
+type DropLabelStmt struct {
+	ddlNode
+
+	IfExists bool
+	Label    model.CIStr
+}
+
+func (n *DropLabelStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP LABEL ")
+	ctx.WriteName(n.Label.String())
+	return nil
+}
+
+func (n *DropLabelStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(newNode)
+}
+
+// IndexKeyType is the type for index key.
+type IndexKeyType int
+
+// Index key types.
+const (
+	IndexKeyTypeNone IndexKeyType = iota
+	IndexKeyTypeUnique
+)
+
+// CreateIndexStmt is a statement to create an index.
+// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
+type CreateIndexStmt struct {
+	ddlNode
+
+	KeyType     IndexKeyType
+	IfNotExists bool
+
+	IndexName  model.CIStr
+	Properties []model.CIStr
+}
+
+// Restore implements Node interface.
+func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE ")
+	switch n.KeyType {
+	case IndexKeyTypeUnique:
+		ctx.WriteKeyWord("UNIQUE ")
+	}
+	ctx.WriteKeyWord("INDEX ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteName(n.IndexName.String())
+
+	ctx.WritePlain(" (")
+	for i, propName := range n.Properties {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		ctx.WriteName(propName.String())
+	}
+	ctx.WritePlain(")")
+
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateIndexStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(newNode)
+}
+
+// DropIndexStmt is a statement to drop the index.
+// See https://dev.mysql.com/doc/refman/5.7/en/drop-index.html
+type DropIndexStmt struct {
+	ddlNode
+
+	IfExists  bool
+	IndexName model.CIStr
+}
+
+// Restore implements Node interface.
+func (n *DropIndexStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP INDEX ")
+	if n.IfExists {
+		ctx.WriteWithSpecialComments("", func() {
+			ctx.WriteKeyWord("IF EXISTS ")
+		})
+	}
+	ctx.WriteName(n.IndexName.String())
+
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DropIndexStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(newNode)
+}

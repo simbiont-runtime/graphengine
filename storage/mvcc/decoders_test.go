@@ -1,0 +1,218 @@
+// ---
+
+package mvcc
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/cockroachdb/pebble"
+	"github.com/simbiont-runtime/graphengine/storage/kv"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestLockDecoder_Decode(t *testing.T) {
+	tmpDir := t.TempDir()
+	db, err := pebble.Open(tmpDir, &pebble.Options{})
+	assert.Nil(t, err)
+
+	writes := db.NewBatch()
+
+	// Mock data
+	data := []struct {
+		key []byte
+		val []byte
+		ver kv.Version
+	}{
+		{key: []byte("test"), val: []byte("test1"), ver: 1},
+		{key: []byte("test"), val: []byte("test3"), ver: 3},
+		{key: []byte("test1"), val: []byte("test5"), ver: 5},
+		{key: []byte("test1"), val: []byte("test7"), ver: 7},
+		{key: []byte("test2"), val: []byte("test9"), ver: 9},
+	}
+	wo := &pebble.WriteOptions{}
+	for _, d := range data {
+		v := Value{
+			Type:      ValueTypePut,
+			StartVer:  d.ver,
+			CommitVer: d.ver + 1,
+			Value:     d.val,
+		}
+		val, err := v.MarshalBinary()
+		assert.Nil(t, err)
+		assert.NotNil(t, val)
+		err = writes.Set(Encode(d.key, d.ver+1), val, wo)
+		assert.Nil(t, err)
+	}
+
+	// Mock lock
+	locks := []struct {
+		key []byte
+		val []byte
+		ver kv.Version
+	}{
+		{key: []byte("test"), val: []byte("test1"), ver: 1},
+		{key: []byte("test1"), val: []byte("test5"), ver: 5},
+		{key: []byte("test2"), val: []byte("test9"), ver: 9},
+	}
+	for _, d := range locks {
+		l := Lock{
+			Primary:  []byte("test"),
+			StartVer: d.ver,
+			Op:       Op_Put,
+			Value:    d.val,
+			TTL:      5,
+		}
+		val, err := l.MarshalBinary()
+		assert.Nil(t, err)
+		assert.NotNil(t, val)
+		err = writes.Set(Encode(d.key, LockVer), val, wo)
+		assert.Nil(t, err)
+	}
+
+	err = db.Apply(writes, wo)
+	assert.Nil(t, err)
+
+	iter := db.NewIter(&pebble.IterOptions{
+		LowerBound: Encode([]byte("test"), LockVer),
+		UpperBound: Encode([]byte("test1"), LockVer),
+	})
+	ok := iter.First()
+	assert.True(t, ok)
+	assert.True(t, iter.Valid())
+	assert.Nil(t, iter.Error())
+
+	decoder := LockDecoder{ExpectKey: []byte("test")}
+	ok, err = decoder.Decode(iter)
+	assert.Nil(t, err)
+	assert.True(t, ok)
+	assert.True(t, bytes.Equal(decoder.Lock.Value, []byte("test1")))
+}
+
+func TestValueDecoder_Decode(t *testing.T) {
+	tmpDir := t.TempDir()
+	db, err := pebble.Open(tmpDir, &pebble.Options{})
+	assert.Nil(t, err)
+
+	writes := db.NewBatch()
+
+	// Mock data
+	data := []struct {
+		key []byte
+		val []byte
+		ver kv.Version
+	}{
+		{key: []byte("test"), val: []byte("test1"), ver: 1},
+		{key: []byte("test"), val: []byte("test3"), ver: 3},
+		{key: []byte("test1"), val: []byte("test5"), ver: 5},
+		{key: []byte("test1"), val: []byte("test7"), ver: 7},
+		{key: []byte("test2"), val: []byte("test9"), ver: 9},
+	}
+	wo := &pebble.WriteOptions{}
+	for _, d := range data {
+		v := Value{
+			Type:      ValueTypePut,
+			StartVer:  d.ver,
+			CommitVer: d.ver + 1,
+			Value:     d.val,
+		}
+		val, err := v.MarshalBinary()
+		assert.Nil(t, err)
+		assert.NotNil(t, val)
+		err = writes.Set(Encode(d.key, d.ver+1), val, wo)
+		assert.Nil(t, err)
+	}
+
+	err = db.Apply(writes, wo)
+	assert.Nil(t, err)
+
+	expected := []struct {
+		key []byte
+		val []byte
+	}{
+		{[]byte("test"), []byte("test3")},
+		{[]byte("test1"), []byte("test7")},
+		{[]byte("test2"), []byte("test9")},
+	}
+
+	for _, e := range expected {
+		iter := db.NewIter(&pebble.IterOptions{
+			LowerBound: Encode(e.key, LockVer),
+		})
+		ok := iter.First()
+		assert.True(t, ok)
+		assert.True(t, iter.Valid())
+		assert.Nil(t, iter.Error())
+
+		decoder := ValueDecoder{ExpectKey: e.key}
+		ok, err = decoder.Decode(iter)
+		assert.Nil(t, err)
+		assert.True(t, ok)
+		assert.True(t, bytes.Equal(decoder.Value.Value, e.val))
+	}
+}
+
+func TestSkipDecoder_Decode(t *testing.T) {
+	tmpDir := t.TempDir()
+	db, err := pebble.Open(tmpDir, &pebble.Options{})
+	assert.Nil(t, err)
+
+	writes := db.NewBatch()
+
+	// Mock data
+	data := []struct {
+		key []byte
+		val []byte
+		ver kv.Version
+	}{
+		{key: []byte("test"), val: []byte("test1"), ver: 1},
+		{key: []byte("test"), val: []byte("test3"), ver: 3},
+		{key: []byte("test1"), val: []byte("test5"), ver: 5},
+		{key: []byte("test1"), val: []byte("test7"), ver: 7},
+		{key: []byte("test2"), val: []byte("test9"), ver: 9},
+	}
+	wo := &pebble.WriteOptions{}
+	for _, d := range data {
+		v := Value{
+			Type:      ValueTypePut,
+			StartVer:  d.ver,
+			CommitVer: d.ver + 1,
+			Value:     d.val,
+		}
+		val, err := v.MarshalBinary()
+		assert.Nil(t, err)
+		assert.NotNil(t, val)
+		err = writes.Set(Encode(d.key, d.ver+1), val, wo)
+		assert.Nil(t, err)
+	}
+
+	err = db.Apply(writes, wo)
+	assert.Nil(t, err)
+
+	expected := []struct {
+		key  []byte
+		next []byte
+	}{
+		{[]byte("test"), []byte("test1")},
+		{[]byte("test1"), []byte("test2")},
+		{[]byte("test2"), nil},
+	}
+
+	for _, e := range expected {
+		iter := db.NewIter(&pebble.IterOptions{
+			LowerBound: Encode(e.key, LockVer),
+		})
+		ok := iter.First()
+		assert.True(t, ok)
+		assert.True(t, iter.Valid())
+		assert.Nil(t, iter.Error())
+
+		decoder := SkipDecoder{CurrKey: e.key}
+		ok, err = decoder.Decode(iter)
+		assert.Nil(t, err)
+		if e.next != nil {
+			assert.True(t, ok)
+			assert.True(t, bytes.Equal(decoder.CurrKey, e.next))
+		}
+	}
+}

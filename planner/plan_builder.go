@@ -1,0 +1,340 @@
+// ---
+
+package planner
+
+import (
+	"bytes"
+
+	"github.com/pingcap/errors"
+	"github.com/simbiont-runtime/graphengine/catalog"
+	"github.com/simbiont-runtime/graphengine/expression"
+	"github.com/simbiont-runtime/graphengine/meta"
+	"github.com/simbiont-runtime/graphengine/parser/ast"
+	"github.com/simbiont-runtime/graphengine/parser/format"
+	"github.com/simbiont-runtime/graphengine/parser/model"
+	"github.com/simbiont-runtime/graphengine/stmtctx"
+)
+
+// builderContext represents the context of building plan.
+type builderContext struct {
+	plan Plan
+}
+
+// Builder is used to build the AST into a plan.
+type Builder struct {
+	sc     *stmtctx.Context
+	stacks []*builderContext
+}
+
+// NewBuilder returns a plan builder.
+func NewBuilder(sc *stmtctx.Context) *Builder {
+	return &Builder{
+		sc: sc,
+	}
+}
+
+// Build builds a statement AST node into a Plan.
+func (b *Builder) Build(node ast.StmtNode) (Plan, error) {
+	b.pushContext()
+	defer b.popContext()
+
+	var err error
+	switch stmt := node.(type) {
+	case ast.DDLNode:
+		err = b.buildDDL(stmt)
+	case *ast.UseStmt:
+		err = b.buildSimple(stmt)
+	case *ast.InsertStmt:
+		err = b.buildInsert(stmt)
+	case *ast.SelectStmt:
+		err = b.buildSelect(stmt)
+	case *ast.ShowStmt:
+		err = b.buildShow(stmt)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return b.plan(), nil
+}
+
+func (b *Builder) pushContext() {
+	b.stacks = append(b.stacks, &builderContext{})
+}
+
+func (b *Builder) popContext() {
+	b.stacks = b.stacks[:len(b.stacks)-1]
+}
+
+func (b *Builder) plan() Plan {
+	return b.stacks[len(b.stacks)-1].plan
+}
+
+func (b *Builder) setPlan(plan Plan) {
+	b.stacks[len(b.stacks)-1].plan = plan
+}
+
+func (b *Builder) buildDDL(ddl ast.DDLNode) error {
+	b.setPlan(&DDL{
+		Statement: ddl,
+	})
+	return nil
+}
+
+func (b *Builder) buildSimple(stmt ast.StmtNode) error {
+	b.setPlan(&Simple{
+		Statement: stmt,
+	})
+	return nil
+}
+
+func (b *Builder) buildInsert(stmt *ast.InsertStmt) error {
+	var intoGraph string
+	if !stmt.IntoGraphName.IsEmpty() {
+		intoGraph = stmt.IntoGraphName.L
+	}
+	var graph *catalog.Graph
+	if intoGraph == "" {
+		graph = b.sc.CurrentGraph()
+	} else {
+		graph = b.sc.Catalog().Graph(intoGraph)
+	}
+	if graph == nil {
+		return errors.Annotatef(meta.ErrGraphNotExists, "graph %s", intoGraph)
+	}
+
+	var fromPlan LogicalPlan
+	if stmt.From != nil {
+		p, err := b.buildMatch(stmt.From.Matches)
+		if err != nil {
+			return err
+		}
+
+		if stmt.Where != nil {
+			cond, err := RewriteExpr(stmt.Where, p)
+			if err != nil {
+				return err
+			}
+			where := &LogicalSelection{
+				Condition: cond,
+			}
+			where.SetChildren(p)
+			p = where
+		}
+		fromPlan = p
+
+	} else {
+		fromPlan = &LogicalDual{}
+	}
+
+	var insertions []*ElementInsertion
+	for _, insertion := range stmt.Insertions {
+		var labels []*catalog.Label
+		for _, lbl := range insertion.LabelsAndProperties.Labels {
+			label := graph.Label(lbl.L)
+			if label == nil {
+				return errors.Annotatef(meta.ErrLabelNotExists, "label %s", lbl.L)
+			}
+			labels = append(labels, label)
+		}
+		var assignments []*expression.Assignment
+		for _, prop := range insertion.LabelsAndProperties.Assignments {
+			// Note: The property suppose to be exists because we have invoked property
+			// creation module before building plan.
+			propInfo := graph.Property(prop.PropertyAccess.PropertyName.L)
+			// Please fix bug in PropertyPreparation if the propInfo empty.
+			if propInfo == nil {
+				return errors.Errorf("property %s not exists", prop.PropertyAccess.PropertyName.L)
+			}
+			expr, err := RewriteExpr(prop.ValueExpression, fromPlan)
+			if err != nil {
+				return err
+			}
+			assignment := &expression.Assignment{
+				VariableRef: &expression.VariableRef{Name: prop.PropertyAccess.VariableName},
+				PropertyRef: &expression.PropertyRef{Property: propInfo},
+				Expr:        expr,
+			}
+			assignments = append(assignments, assignment)
+		}
+		var fromIDExpr, toIDExpr expression.Expression
+		if insertion.InsertionType == ast.InsertionTypeEdge {
+			fromExpr, err := RewriteExpr(&ast.VariableReference{VariableName: insertion.From}, fromPlan)
+			if err != nil {
+				return err
+			}
+			fromIDExpr, err = expression.NewFuncExpr("id", fromExpr)
+			if err != nil {
+				return err
+			}
+			toExpr, err := RewriteExpr(&ast.VariableReference{VariableName: insertion.To}, fromPlan)
+			if err != nil {
+				return err
+			}
+			toIDExpr, err = expression.NewFuncExpr("id", toExpr)
+			if err != nil {
+				return err
+			}
+		}
+		gi := &ElementInsertion{
+			Type:        insertion.InsertionType,
+			Labels:      labels,
+			Assignments: assignments,
+			FromIDExpr:  fromIDExpr,
+			ToIDExpr:    toIDExpr,
+		}
+		insertions = append(insertions, gi)
+	}
+
+	plan := &Insert{
+		Graph:      graph,
+		Insertions: insertions,
+	}
+	if stmt.From != nil {
+		plan.MatchPlan = Optimize(fromPlan)
+	}
+
+	b.setPlan(plan)
+	return nil
+}
+
+func (b *Builder) buildSelect(stmt *ast.SelectStmt) error {
+	// Build source
+	plan, err := b.buildMatch(stmt.From.Matches)
+	if err != nil {
+		return err
+	}
+
+	// Build selection
+	if stmt.Where != nil {
+		expr, err := RewriteExpr(stmt.Where, plan)
+		if err != nil {
+			return err
+		}
+		where := &LogicalSelection{
+			Condition: expr,
+		}
+		where.SetChildren(plan)
+		plan = where
+	}
+
+	// TODO: support GROUP BY clause.
+	// Explicit GROUP BY: SELECT * FROM MATCH (n) GROUP BY n.name;
+	// Implicit GROUP BY: SELECT COUNT(*) FROM MATCH (n);
+	if stmt.GroupBy != nil {
+
+	}
+
+	if stmt.Having != nil {
+		expr, err := RewriteExpr(stmt.Having.Expr, plan)
+		if err != nil {
+			return err
+		}
+		having := &LogicalSelection{
+			Condition: expr,
+		}
+		having.SetChildren(plan)
+		plan = having
+	}
+
+	if stmt.OrderBy != nil {
+		byItems := make([]*ByItem, 0, len(stmt.OrderBy.Items))
+		for _, item := range stmt.OrderBy.Items {
+			expr, err := RewriteExpr(item.Expr.Expr, plan)
+			if err != nil {
+				return err
+			}
+			byItems = append(byItems, &ByItem{
+				Expr:      expr,
+				AsName:    item.Expr.AsName,
+				Desc:      item.Desc,
+				NullOrder: item.NullOrder,
+			})
+		}
+		orderby := &LogicalSort{
+			ByItems: byItems,
+		}
+		orderby.SetChildren(plan)
+		plan = orderby
+	}
+
+	if stmt.Limit != nil {
+		offset, err := RewriteExpr(stmt.Limit.Offset, plan)
+		if err != nil {
+			return err
+		}
+		count, err := RewriteExpr(stmt.Limit.Count, plan)
+		if err != nil {
+			return err
+		}
+		limit := &LogicalLimit{
+			Offset: offset,
+			Count:  count,
+		}
+		limit.SetChildren(plan)
+		plan = limit
+	}
+
+	cols := make(ResultColumns, 0, len(stmt.Select.Elements))
+	// TODO: support DISTINCT and wildcard.
+	proj := &LogicalProjection{}
+	for _, elem := range stmt.Select.Elements {
+		expr, err := RewriteExpr(elem.ExpAsVar.Expr, plan)
+		if err != nil {
+			return err
+		}
+		proj.Exprs = append(proj.Exprs, expr)
+
+		var colName model.CIStr
+		if elem.ExpAsVar.AsName.IsEmpty() {
+			var buf bytes.Buffer
+			restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+			if err := elem.ExpAsVar.Expr.Restore(restoreCtx); err != nil {
+				return err
+			}
+			colName = model.NewCIStr(buf.String())
+		} else {
+			colName = elem.ExpAsVar.AsName
+		}
+
+		cols = append(cols, ResultColumn{
+			Name: colName,
+			Type: expr.ReturnType(),
+		})
+
+	}
+	proj.SetColumns(cols)
+	proj.SetChildren(plan)
+
+	b.setPlan(proj)
+	return nil
+}
+
+func (b *Builder) buildMatch(matches []*ast.MatchClause) (LogicalPlan, error) {
+	if len(matches) == 0 {
+		return &LogicalDual{}, nil
+	}
+
+	sgb := NewSubgraphBuilder(b.sc.CurrentGraph())
+	for _, match := range matches {
+		sgb.AddPathPatterns(match.Paths...)
+	}
+	sg, err := sgb.Build()
+	if err != nil {
+		return nil, err
+	}
+
+	cols := ResultColumnsFromSubgraph(sg)
+	plan := &LogicalMatch{Subgraph: sg}
+	plan.SetColumns(cols)
+
+	return plan, nil
+}
+
+func (b *Builder) buildShow(stmt *ast.ShowStmt) error {
+	plan := &Simple{
+		Statement: stmt,
+	}
+	b.setPlan(plan)
+	return nil
+}
