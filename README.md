@@ -1,6 +1,4 @@
 # What is GraphEngine
-[![Go Reference](https://pkg.go.dev/badge/github.com/simbiont-runtime/graphengine.svg)](https://pkg.go.dev/github.com/simbiont-runtime/graphengine)
-[![GitHub Actions](https://github.com/simbiont-runtime/graphengine/workflows/Check/badge.svg)](https://github.com/simbiont-runtime/graphengine/actions?query=workflow%3ACheck)
 
 graphEngine is a [PGQL](https://pgql-lang.org/)-compatible embeddable graph database for large-scale vertices. 
 You can find the specification [here](https://pgql-lang.org/spec/1.5/).
