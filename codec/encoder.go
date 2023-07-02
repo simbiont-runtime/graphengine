@@ -76,9 +76,8 @@ func (e *PropertyEncoder) reform(labelIDs, propertyIDs []uint16, values []datum.
 	e.offsets = make([]uint16, len(e.propertyIDs))
 	e.data = e.data[:0]
 	e.values = e.values[:0]
-	for i := range values {
-		e.values = append(e.values, values[i])
-	}
+
+	e.values = append(e.values, values...)
 
 	sort.Slice(e.labelIDs, func(i, j int) bool {
 		return e.labelIDs[i] < e.labelIDs[j]
