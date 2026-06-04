@@ -1,107 +1,109 @@
-# What is GraphEngine
+# GraphEngine
 
-graphEngine is a [PGQL](https://pgql-lang.org/)-compatible embeddable graph database for large-scale vertices. 
-You can find the specification [here](https://pgql-lang.org/spec/1.5/).
+GraphEngine is an open-source graph-native data platform for large-scale knowledge systems, semantic data processing, analytical workloads, and AI-assisted infrastructure.
 
-## Installation
+Originally developed for enterprise and industrial environments, GraphEngine was deployed in production knowledge-management and analytical systems. The project is now being actively revived as an open-source initiative focused on graph data infrastructure and AI-native data workflows.
 
-```bash
-go get -u github.com/simbiont-runtime/graphengine
-```
+## Why GraphEngine
 
-## Quick Start
+Modern software increasingly depends on interconnected data, semantic relationships, and machine-assisted reasoning.
 
-### Playground
+GraphEngine explores a unified architecture that combines:
 
-```bash
-> make build
-> ./bin/graphengine play
-```
+- Graph-native storage
+- Semantic knowledge modeling
+- Analytical processing
+- Distributed execution
+- AI-assisted data workflows
+- Open and interoperable infrastructure
 
-### Build Application
-graphEngine implements driver for [database/sql](https://golang.org/pkg/database/sql/). To use graphEngien, you can simply import GraphEngine package and use `graphEngine` as the driver name in `sql.Open`.
+## Current Status
 
-Here is an example of how to use create a graph and query it. The graph is an example in [PGQL specification](https://pgql-lang.org/spec/1.5/#edge-patterns).
+GraphEngine is under active modernization.
 
-```go
-package main
+The current focus is:
 
-import (
-	"context"
-	"database/sql"
-	"fmt"
-	"log"
+- Codebase modernization
+- Improved documentation
+- Expanded test coverage
+- Security hardening
+- Contributor onboarding
+- Open-source sustainability
 
-	_ "github.com/simbiont-runtime/graphengine"
-)
+## Production Background
 
-func main() {
-	db, err := sql.Open("graphEngine", "test.db")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
+Earlier versions of GraphEngine were used in production environments supporting:
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+- Industrial knowledge systems
+- Engineering information management
+- Enterprise analytical platforms
 
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
+Certain deployment details remain confidential under existing contractual obligations.
 
-	// Create a graph.
-	mustExec(ctx, conn, "CREATE GRAPH student_network")
+## Roadmap 2026
 
-	// Change the current graph.
-	mustExec(ctx, conn, "USE student_network")
+### Core Infrastructure
 
-	// Create labels.
-	mustExec(ctx, conn, "CREATE LABEL Person")
-	mustExec(ctx, conn, "CREATE LABEL University")
-	mustExec(ctx, conn, "CREATE LABEL knows")
-	mustExec(ctx, conn, "CREATE LABEL studentOf")
+- Storage engine improvements
+- Query execution optimization
+- Distributed processing capabilities
+- Improved observability
 
-	// Create vertices.
-	mustExec(ctx, conn, `INSERT VERTEX x LABELS (Person) PROPERTIES (x.name = 'Kathrine', x.dob = DATE '1994-01-15')`)
-	mustExec(ctx, conn, `INSERT VERTEX x LABELS (Person) PROPERTIES (x.name = 'Riya', x.dob = DATE '1995-03-20')`)
-	mustExec(ctx, conn, `INSERT VERTEX x LABELS (Person) PROPERTIES (x.name = 'Lee', x.dob = DATE '1996-01-20')`)
-	mustExec(ctx, conn, `INSERT VERTEX x LABELS (University) PROPERTIES (x.name = 'UC Berkeley')`)
+### AI-Native Data Platform
 
-	// Create edges.
-	mustExec(ctx, conn, `INSERT EDGE e BETWEEN x AND y LABELS ( knows ) FROM MATCH (x), MATCH (y) WHERE x.name = 'Kathrine' AND y.name = 'Lee'`)
-	mustExec(ctx, conn, `INSERT EDGE e BETWEEN x AND y LABELS ( knows ) FROM MATCH (x), MATCH (y) WHERE x.name = 'Kathrine' AND y.name = 'Riya'`)
-	mustExec(ctx, conn, `INSERT EDGE e BETWEEN x AND y LABELS ( knows ) FROM MATCH (x), MATCH (y) WHERE x.name = 'Lee' AND y.name = 'Kathrine'`)
-	mustExec(ctx, conn, `INSERT EDGE e BETWEEN x AND y LABELS ( studentOf ) FROM MATCH (x), MATCH (y) WHERE x.name = 'Kathrine' AND y.name = 'UC Berkeley'`)
-	mustExec(ctx, conn, `INSERT EDGE e BETWEEN x AND y LABELS ( studentOf ) FROM MATCH (x), MATCH (y) WHERE x.name = 'Lee' AND y.name = 'UC Berkeley'`)
-	mustExec(ctx, conn, `INSERT EDGE e BETWEEN x AND y LABELS ( studentOf ) FROM MATCH (x), MATCH (y) WHERE x.name = 'Riya' AND y.name = 'UC Berkeley'`)
+- Graph-assisted AI workflows
+- Semantic query planning
+- Structured memory architectures
+- AI-integrated analytics
 
-	// Query the graph.
-	rows, err := conn.QueryContext(ctx, "SELECT a.name AS a, b.name AS b FROM MATCH (a:Person) -[e:knows]-> (b:Person)")
-	if err != nil {
-		log.Fatal(err)
-	}
-	var a, b string
-	for rows.Next() {
-		if err := rows.Scan(&a, &b); err != nil {
-			log.Fatal(err)
-		}
-		fmt.Printf("'%s' knows '%s'\n", a, b)
-	}
-}
+### Open Source Growth
 
-func mustExec(ctx context.Context, conn *sql.Conn, query string) {
-	_, err := conn.ExecContext(ctx, query)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-```
+- Better contributor experience
+- Expanded examples and tutorials
+- Public architecture documentation
+- Community engagement
+
+## OpenAI & Codex Integration
+
+GraphEngine plans to leverage Codex and OpenAI APIs to accelerate:
+
+- Documentation generation
+- Test generation
+- Refactoring and modernization
+- Pull request review
+- Issue triage
+- Release automation
+- Security analysis
+
+All resulting workflows, tooling, integrations, and lessons learned will be published openly for the benefit of the open-source community.
+
+## Security
+
+Security is a core project priority.
+
+GraphEngine combines storage, query execution, distributed processing, and future AI-integrated workflows. Maintaining strong security guarantees is critical as the project evolves.
+
+Planned security initiatives include:
+
+- Threat modeling
+- Automated vulnerability assessment
+- Dependency auditing
+- Security-focused testing
+- Secure contribution workflows
 
 ## Contributing
 
-We welcome contributions from everyone. GraphEngine is in its early stages, if you have any ideas or suggestions, please feel free to open an issue or pull request.
+Contributions, issue reports, discussions, and feedback are welcome.
+
+Areas of particular interest include:
+
+- Databases
+- Distributed systems
+- Graph technologies
+- Knowledge representation
+- AI infrastructure
+- Developer tooling
 
 ## License
 
-graphEngine is licensed under the Apache 2.0 license. See [LICENSE](LICENSE) for the full license text.
+See LICENSE for details.
