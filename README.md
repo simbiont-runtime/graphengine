@@ -107,3 +107,7 @@ Areas of particular interest include:
 ## License
 
 See LICENSE for details.
+
+## AI Contributions
+
+AI contibutions, especially, made by OpenAI Codex large language models family and Codex agent systems (cause it's published in Open Source manner, opposite to anthropic's claude code) are welcome. 
